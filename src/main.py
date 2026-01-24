@@ -6,6 +6,7 @@ import re
 from discord import app_commands
 
 from config import ENV, DISCORD_TOKEN, DEV_GUILD_ID, LOG_LEVEL
+from storage.db import init_db
 
 DISCORD_TIMESTAMP_RE = re.compile(r"<t:(\d+)(?::[a-zA-Z])?>")
 
@@ -145,6 +146,7 @@ async def post(
 
 def main() -> None:
     setup_logging()
+    init_db()
     log.info("Starting Synar (env=%s)", ENV)
     client.run(DISCORD_TOKEN)
 
