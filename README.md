@@ -19,10 +19,10 @@ This repository contains the full source code.
 ```
 Synar/
 ├─ src/
-│ └─ main.py # Application entry point
-├─ requirements.txt # Python dependencies
+│ └─ main.py
+├─ requirements.txt
 ├─ .gitignore
-├─ .env.example # Environment variable template
+├─ .env.example
 └─ README.md
 ```
 
