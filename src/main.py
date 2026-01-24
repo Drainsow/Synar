@@ -1,12 +1,13 @@
 import logging
 from datetime import datetime, timezone
+from typing import Literal
 
 import discord
 import re
 from discord import app_commands
 
 from config import ENV, DISCORD_TOKEN, DEV_GUILD_ID, LOG_LEVEL
-from storage.db import init_db
+from storage.db import init_db, get_connection
 
 DISCORD_TIMESTAMP_RE = re.compile(r"<t:(\d+)(?::[a-zA-Z])?>")
 
@@ -48,7 +49,6 @@ def parse_unix_timestamp(value: str) -> int | None:
     except ValueError:
         return None
 
-    # Sanity checks (optional but recommended)
     if ts < 946684800:  # 2000-01-01
         return None
 
@@ -56,7 +56,6 @@ def parse_unix_timestamp(value: str) -> int | None:
     if ts > max_future:
         return None
 
-    print(ts)
     return ts
 
 
@@ -88,7 +87,6 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self) -> None:
-        # Slash command sync (dev vs prod)
         if ENV == "dev":
             guild = discord.Object(id=int(DEV_GUILD_ID))
             self.tree.copy_global_to(guild=guild)
@@ -113,14 +111,28 @@ client = MyClient()
 # Slash commands
 # ============================================================
 
+@client.tree.command(name="remove", description="Remove your scheduled event")
+@app_commands.describe(
+    id="ID of the event",
+)
+async def remove(
+    interaction: discord.Interaction,
+    id: int
+) -> None:
+    msg = "removed" #wip
+    await interaction.response.send_message(msg) #wip
+
+
 @client.tree.command(name="post", description="Post a scheduled event")
 @app_commands.describe(
     title="Title of the event",
     timestamp="Date of the event (required) - Unix timestamp (use hammertime.cyou)",
+    category="Type of event",
 )
 async def post(
     interaction: discord.Interaction,
     timestamp: str,
+    category: Literal["Raid", "Fractals"],
     title: str | None = None,
 ) -> None:
     ts = parse_unix_timestamp(timestamp)
@@ -128,6 +140,37 @@ async def post(
     if ts is None:
         await send_invalid_timestamp(interaction)
         return
+    
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO events (
+            guild_id,
+            channel_id,
+            creator_id,
+            title,
+            category,
+            timestamp,
+            created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                interaction.guild_id,
+                interaction.channel_id,
+                interaction.user.id,
+                title,
+                category,
+                ts,
+                now_ts,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     
     stamp_full = f"<t:{ts}:F>"
     stamp_relative = f"<t:{ts}:R>"
