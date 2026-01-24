@@ -40,10 +40,13 @@ class MyClient(discord.Client):
 client = MyClient()
 
 
-@client.tree.command(name="text", description="Say hello")
-@app_commands.describe(name="Optional name")
-async def text(interaction: discord.Interaction, name: str | None = None) -> None:
-    msg = f"Hello {name}!" if name else "Hello!"
+@client.tree.command(name="post", description="Post a scheduled event")
+@app_commands.describe(title="Title of the event", date="Date of the event (required)")
+async def post(interaction: discord.Interaction, date: str, title: str | None = None) -> None:
+    if title:
+        msg = f"Post created:\nTitle: {title}\nDate: {date}"
+    else:
+        msg = f"Post created:\nDate: {date}"
     await interaction.response.send_message(msg)
 
 
