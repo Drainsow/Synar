@@ -1,8 +1,21 @@
-import os
+import logging
+
 import discord
 from discord import app_commands
 
-TOKEN = os.environ.get("DISCORD_TOKEN")  # set this in your shell
+from config import ENV, DISCORD_TOKEN, DEV_GUILD_ID, LOG_LEVEL
+
+
+def setup_logging() -> None:
+    level = getattr(logging, LOG_LEVEL, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+
+log = logging.getLogger("synar")
+
 
 class MyClient(discord.Client):
     def __init__(self) -> None:
@@ -10,23 +23,35 @@ class MyClient(discord.Client):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
-    # async def setup_hook(self) -> None:
-        # Sync slash commands globally.
-        # Global sync can take a while to show up in Discord.
-    #    await self.tree.sync()
-
     async def setup_hook(self) -> None:
-        guild_id = int(os.environ["GUILD_ID"])  # your test server ID
-        guild = discord.Object(id=guild_id)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
+        if ENV == "dev":
+            guild = discord.Object(id=int(DEV_GUILD_ID))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            log.info("Synced commands to dev guild %s", DEV_GUILD_ID)
+        else:
+            await self.tree.sync()
+            log.info("Synced commands globally")
+
+    async def on_ready(self) -> None:
+        log.info("Logged in as %s (id=%s)", self.user, self.user.id)
+
 
 client = MyClient()
 
+
 @client.tree.command(name="text", description="Say hello")
 @app_commands.describe(name="Optional name")
-async def text(interaction: discord.Interaction, name: str | None = None):
-    msg = f"Hello! {name}" if name else "Hello!"
+async def text(interaction: discord.Interaction, name: str | None = None) -> None:
+    msg = f"Hello {name}!" if name else "Hello!"
     await interaction.response.send_message(msg)
 
-client.run(TOKEN)
+
+def main() -> None:
+    setup_logging()
+    log.info("Starting Synar (env=%s)", ENV)
+    client.run(DISCORD_TOKEN)
+
+
+if __name__ == "__main__":
+    main()
