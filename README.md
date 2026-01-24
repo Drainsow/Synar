@@ -16,6 +16,7 @@ This repository contains the full source code.
 
 ## Project Structure
 
+```
 Synar/
 ├─ src/
 │ └─ main.py # Application entry point
@@ -23,6 +24,7 @@ Synar/
 ├─ .gitignore
 ├─ .env.example # Environment variable template
 └─ README.md
+```
 
 ---
 
