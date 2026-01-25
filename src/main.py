@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from datetime import date, time as dtime
 from typing import Literal
 
 import discord
@@ -76,6 +77,18 @@ async def send_invalid_timestamp(interaction: discord.Interaction) -> None:
     )
 
 
+def parse_time_hhmm(value: str) -> dtime | None:
+    try:
+        hour, minute = value.strip().split(":")
+        hour = int(hour)
+        minute = int(minute)
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return dtime(hour=hour, minute=minute)
+    except Exception:
+        return None
+
+
 # ============================================================
 # Discord client
 # ============================================================
@@ -108,31 +121,137 @@ client = MyClient()
 
 
 # ============================================================
+# Views and Modals
+# ============================================================
+
+
+
+# ============================================================
 # Slash commands
 # ============================================================
 
-@client.tree.command(name="remove", description="Remove your scheduled event")
-@app_commands.describe(
-    id="ID of the event",
-)
-async def remove(
-    interaction: discord.Interaction,
-    id: int
-) -> None:
-    msg = "removed" #wip
-    await interaction.response.send_message(msg) #wip
+DAILY_INTERVALS = {
+    "daily": 1,
+    "every 2 days": 2,
+    "every 3 days": 3,
+    "every 4 days": 4,
+    "every 5 days": 5,
+    "every 6 days": 6,
+}
+WEEKLY_INTERVALS = {
+    "weekly": 1,
+    "every 2 weeks": 2,
+    "every 3 weeks": 3,
+    "every 4 weeks": 4,
+}
+
+class ScheduleIntervalView(discord.ui.View):
+    def __init__(self, *, title: str, category: str, frequency: str, time: str, start_date: str | None):
+        super().__init__(timeout=300)
+        self.title = title
+        self.category = category
+        self.frequency = frequency
+        self.time = time
+        self.start_date = start_date
+        self.interval_value: int | None = None
+
+        options = []
+        if frequency == "daily":
+            for label in DAILY_INTERVALS.keys():
+                options.append(discord.SelectOption(label=label))
+        else:
+            for label in WEEKLY_INTERVALS.keys():
+                options.append(discord.SelectOption(label=label))
+
+        self.interval_select.options = options
+
+    @discord.ui.select(placeholder="Select interval")
+    async def interval_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        label = select.values[0]
+        if self.frequency == "daily":
+            self.interval_value = DAILY_INTERVALS[label]
+        else:
+            self.interval_value = WEEKLY_INTERVALS[label]
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Submit", style=discord.ButtonStyle.green)
+    async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.interval_value is None:
+            await interaction.response.send_message("Please select an interval first.", ephemeral=True)
+            return
+        
+        time_ts = parse_unix_timestamp(self.time)
+        if time_ts is None:
+            await interaction.response.send_message("Time must be a valid Unix timestamp.", ephemeral=True)
+            return
+        
+        raw_start = (self.start_date or "").strip()
+        if raw_start:
+            start_ts = parse_unix_timestamp(raw_start)
+            if start_ts is None:
+                await interaction.response.send_message(
+                    "start_date must be a valid Unix timestamp.", ephemeral=True
+                )
+                return
+        else:
+            start_ts = int(datetime.now(tz=timezone.utc).timestamp())
+        
+        first_run_at = start_ts if start_ts is not None else time_ts
+
+        now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+        step_seconds = 86400 if self.frequency == "daily" else 7 * 86400
+        step_seconds *= self.interval_value
+
+        next_run_at = first_run_at
+        while next_run_at < now_ts:
+            next_run_at += step_seconds
+
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                INSERT INTO schedules (
+                    guild_id, channel_id, creator_id,
+                    title, category,
+                    frequency, interval,
+                    time_of_day, start_date,
+                    created_at, next_run_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    interaction.guild_id,
+                    interaction.channel_id,
+                    interaction.user.id,
+                    self.title,
+                    self.category,
+                    self.frequency,
+                    self.interval_value,
+                    time_ts,
+                    start_ts,
+                    now_ts,
+                    next_run_at,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        await interaction.response.edit_message(content="Schedule created.", view=None)
 
 
-@client.tree.command(name="post", description="Post a scheduled event")
+create = app_commands.Group(name="create", description="Create events and schedules")
+
+@create.command(name="event", description="Create a one-time event")
 @app_commands.describe(
     title="Title of the event",
-    timestamp="Date of the event (required) - Unix timestamp (use hammertime.cyou)",
+    timestamp="Date of the event (Unix timestamp)",
     category="Type of event",
 )
-async def post(
+async def create_event(
     interaction: discord.Interaction,
     timestamp: str,
-    category: Literal["Raid", "Fractals"],
+    category: Literal["Raid", "Dungeon", "Fractals", "Other"],
     title: str | None = None,
 ) -> None:
     ts = parse_unix_timestamp(timestamp)
@@ -175,12 +294,51 @@ async def post(
     stamp_full = f"<t:{ts}:F>"
     stamp_relative = f"<t:{ts}:R>"
 
-    if title:
-        msg = f"Post created:\nTitle: {title}\nDate: {stamp_full} - {stamp_relative}"
-    else:
-        msg = f"Post created:\nDate: {stamp_full} - {stamp_relative}"
+    msg = f"Post created:\nTitle: {title}\nDate: {stamp_full} - {stamp_relative}\nType: {category}\nCreator: {interaction.user.display_name}"
 
     await interaction.response.send_message(msg)
+
+
+@create.command(name="schedule", description="Create a recurring schedule")
+@app_commands.describe(
+    title="Title of the event",
+    category="Event type",
+    frequency="daily or weekly",
+    time="HH:MM (24h)",
+    start_date="YYYY-MM-DD (optional)",
+)
+async def create_schedule(
+    interaction: discord.Interaction,
+    title: str,
+    category: Literal["Raids", "Dungeons", "Fractals", "Other"],
+    frequency: Literal["daily", "weekly"],
+    time: str,
+    start_date: str | None = None,
+) -> None:
+    view = ScheduleIntervalView(
+        title=title,
+        category=category,
+        frequency=frequency,
+        time=time,
+        start_date=start_date,
+    )
+    await interaction.response.send_message(
+        "Pick an interval:", view=view, ephemeral=True
+    )
+
+client.tree.add_command(create)
+
+
+@client.tree.command(name="remove", description="Remove your scheduled event")
+@app_commands.describe(
+    id="ID of the event",
+)
+async def remove(
+    interaction: discord.Interaction,
+    id: int
+) -> None:
+    msg = "removed" #wip
+    await interaction.response.send_message(msg) #wip
 
 
 # ============================================================

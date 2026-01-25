@@ -1,1 +1,1 @@
-ALTER TABLE events ADD COLUMN category TEXT;
+ALTER TABLE events ADD COLUMN category TEXT NOT NULL;
