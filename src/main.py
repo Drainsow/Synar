@@ -5,6 +5,7 @@ from typing import Literal
 import discord
 import re
 from discord import app_commands
+from discord.ext import tasks
 
 from config import ENV, DISCORD_TOKEN, DEV_GUILD_ID, LOG_LEVEL
 from storage.db import init_db, get_connection
@@ -75,6 +76,109 @@ async def send_invalid_timestamp(interaction: discord.Interaction) -> None:
         ephemeral=True,
     )
 
+def build_event_embed(
+        title: str,
+        category: str,
+        timestamp: str,
+        event_id: int,
+        schedule_id: int | None = None,
+) -> discord.Embed:
+    embed = discord.Embed(
+        title = title or "Event",
+        description=f"**Category:** {category}\n**Date:** <t:{timestamp}:F>",
+        color=discord.Color.blue(),
+    )
+
+    footer = f"Event ID: {event_id}"
+    if schedule_id is not None:
+        footer += f" | Schedule ID: {schedule_id}"
+    embed.set_footer(text=footer)
+    return embed
+
+
+# ============================================================
+# Tasks
+# ============================================================
+
+@tasks.loop(minutes=1)
+async def scheduler_loop():
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM schedules
+            WHERE end_date IS NULL OR end_date > ?
+            """,
+            (now_ts,),
+        ).fetchall()
+
+        for row in rows:
+            step = 86400 if row["frequency"] == "daily" else 7 * 86400
+            step *= row["interval"]
+
+            next_run = row["next_run_at"]
+            while next_run <= now_ts:
+                next_run += step
+
+            if row["end_date"] is not None and next_run > row["end_date"]:
+                continue
+
+            if next_run != row["next_run_at"]:
+                conn.execute(
+                    "UPDATE schedules SET next_run_at = ? WHERE id = ?",
+                    (next_run, row["id"]),
+                )
+
+            exists = conn.execute(
+                """
+                SELECT 1 FROM events
+                WHERE schedule_id = ? AND timestamp = ?
+                LIMIT 1
+                """,
+                (row["id"], next_run)
+            ).fetchone()
+
+            if not exists:
+                conn.execute(
+                    """
+                    INSERT INTO events (
+                        schedule_id,
+                        guild_id, channel_id, creator_id,
+                        title, category, timestamp, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["id"],
+                        row["guild_id"],
+                        row["channel_id"],
+                        row["creator_id"],
+                        row["title"],
+                        row["category"],
+                        next_run,
+                        now_ts
+                    ),
+                )
+                event_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+                channel = client.get_channel(row["channel_id"])
+                if channel is None:
+                    channel = await client.fetch_channel(row["channel_id"])
+
+                embed = build_event_embed(
+                    row["title"],
+                    row["category"],
+                    next_run,
+                    event_id,
+                    row["id"],
+                )
+                await channel.send(embed=embed)
+
+        conn.commit()
+    finally:
+        conn.close()
+
 
 # ============================================================
 # Discord client
@@ -95,6 +199,7 @@ class MyClient(discord.Client):
         else:
             await self.tree.sync()
             log.info("Synced commands globally")
+        scheduler_loop.start()
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (id=%s)", self.user, self.user.id)
@@ -224,15 +329,19 @@ class ScheduleIntervalView(discord.ui.View):
             )
             return
         
-        first_run_at = start_ts if start_ts is not None else time_ts
-
         now_ts = int(datetime.now(tz=timezone.utc).timestamp())
         step_seconds = 86400 if self.frequency == "daily" else 7 * 86400
         step_seconds *= self.interval_value
 
+        first_run_at = time_ts
+
+        while first_run_at < start_ts:
+            first_run_at += step_seconds
+
+        while first_run_at < now_ts:
+            first_run_at += step_seconds
+
         next_run_at = first_run_at
-        while next_run_at < now_ts:
-            next_run_at += step_seconds
 
         conn = get_connection()
         try:
@@ -294,7 +403,7 @@ async def create_event(
 
     conn = get_connection()
     try:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO events (
             guild_id,
@@ -317,6 +426,7 @@ async def create_event(
                 now_ts,
             ),
         )
+        event_id = cursor.lastrowid
         conn.commit()
     finally:
         conn.close()
@@ -324,9 +434,15 @@ async def create_event(
     stamp_full = f"<t:{ts}:F>"
     stamp_relative = f"<t:{ts}:R>"
 
-    msg = f"Post created:\nTitle: {title}\nDate: {stamp_full} - {stamp_relative}\nType: {category}\nCreator: {interaction.user.display_name}"
+    embed = build_event_embed(
+        title=title,
+        category=category,
+        timestamp=ts,
+        event_id=event_id,
+        schedule_id=None,
+    )
 
-    await interaction.response.send_message(msg)
+    await interaction.response.send_message(embed=embed)
 
 
 @create.command(name="schedule", description="Create a recurring schedule")
