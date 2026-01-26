@@ -9,8 +9,7 @@ CREATE TABLE IF NOT EXISTS schedules (
   frequency TEXT NOT NULL,
   interval INTEGER NOT NULL,
 
-  byweekday INTEGER,
-  bymonthday INTEGER,
+  day_of_week INTEGER,
 
   time_of_day TEXT NOT NULL,
   next_run_at INTEGER,

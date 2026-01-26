@@ -1,6 +1,5 @@
 import logging
-from datetime import datetime, timezone, timedelta
-from datetime import date, time as dtime
+from datetime import datetime, timezone
 from typing import Literal
 
 import discord
@@ -77,18 +76,6 @@ async def send_invalid_timestamp(interaction: discord.Interaction) -> None:
     )
 
 
-def parse_time_hhmm(value: str) -> dtime | None:
-    try:
-        hour, minute = value.strip().split(":")
-        hour = int(hour)
-        minute = int(minute)
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            return None
-        return dtime(hour=hour, minute=minute)
-    except Exception:
-        return None
-
-
 # ============================================================
 # Discord client
 # ============================================================
@@ -144,16 +131,27 @@ WEEKLY_INTERVALS = {
     "every 3 weeks": 3,
     "every 4 weeks": 4,
 }
+WEEKDAY_OPTIONS = [
+    discord.SelectOption(label="Monday", value="0"),
+    discord.SelectOption(label="Tuesday", value="1"),
+    discord.SelectOption(label="Wednesday", value="2"),
+    discord.SelectOption(label="Thursday", value="3"),
+    discord.SelectOption(label="Friday", value="4"),
+    discord.SelectOption(label="Saturday", value="5"),
+    discord.SelectOption(label="Sunday", value="6"),
+]
 
 class ScheduleIntervalView(discord.ui.View):
-    def __init__(self, *, title: str, category: str, frequency: str, time: str, start_date: str | None):
+    def __init__(self, *, title: str, category: str, frequency: str, time: str, start_date: str | None, end_date: str | None):
         super().__init__(timeout=300)
         self.title = title
         self.category = category
         self.frequency = frequency
         self.time = time
         self.start_date = start_date
+        self.end_date = end_date
         self.interval_value: int | None = None
+        self.day_of_week: int | None = None
 
         options = []
         if frequency == "daily":
@@ -165,6 +163,10 @@ class ScheduleIntervalView(discord.ui.View):
 
         self.interval_select.options = options
 
+        self.weekday_select.options = WEEKDAY_OPTIONS
+        if self.frequency != "weekly":
+            self.remove_item(self.weekday_select)
+
     @discord.ui.select(placeholder="Select interval")
     async def interval_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         label = select.values[0]
@@ -174,10 +176,19 @@ class ScheduleIntervalView(discord.ui.View):
             self.interval_value = WEEKLY_INTERVALS[label]
         await interaction.response.defer()
 
+    @discord.ui.select(placeholder="Select weekday")
+    async def weekday_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.day_of_week = int(select.values[0])
+        await interaction.response.defer()
+
     @discord.ui.button(label="Submit", style=discord.ButtonStyle.green)
     async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.interval_value is None:
             await interaction.response.send_message("Please select an interval first.", ephemeral=True)
+            return
+        
+        if self.frequency == "weekly" and self.day_of_week is None:
+            await interaction.response.send_message("Please select a weekday.", ephemeral=True)
             return
         
         time_ts = parse_unix_timestamp(self.time)
@@ -195,6 +206,23 @@ class ScheduleIntervalView(discord.ui.View):
                 return
         else:
             start_ts = int(datetime.now(tz=timezone.utc).timestamp())
+
+        raw_end = (self.end_date or "").strip()
+        if raw_end:
+            end_ts = parse_unix_timestamp(raw_end)
+            if end_ts is None:
+                await interaction.response.send_message(
+                    "end_date must be a valid Unix timestamp.", ephemeral=True
+                )
+                return
+        else:
+            end_ts = None
+
+        if end_ts is not None and end_ts <= start_ts:
+            await interaction.response.send_message(
+                "end_date must be after start_date.", ephemeral=True
+            )
+            return
         
         first_run_at = start_ts if start_ts is not None else time_ts
 
@@ -213,11 +241,11 @@ class ScheduleIntervalView(discord.ui.View):
                 INSERT INTO schedules (
                     guild_id, channel_id, creator_id,
                     title, category,
-                    frequency, interval,
-                    time_of_day, start_date,
+                    frequency, interval, day_of_week,
+                    time_of_day, start_date, end_date,
                     created_at, next_run_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     interaction.guild_id,
@@ -227,8 +255,10 @@ class ScheduleIntervalView(discord.ui.View):
                     self.category,
                     self.frequency,
                     self.interval_value,
+                    self.day_of_week,
                     time_ts,
                     start_ts,
+                    end_ts,
                     now_ts,
                     next_run_at,
                 ),
@@ -245,14 +275,14 @@ create = app_commands.Group(name="create", description="Create events and schedu
 @create.command(name="event", description="Create a one-time event")
 @app_commands.describe(
     title="Title of the event",
-    timestamp="Date of the event (Unix timestamp)",
     category="Type of event",
+    timestamp="Date of the event (Unix timestamp)",
 )
 async def create_event(
     interaction: discord.Interaction,
-    timestamp: str,
+    title: str,
     category: Literal["Raid", "Dungeon", "Fractals", "Other"],
-    title: str | None = None,
+    timestamp: str,
 ) -> None:
     ts = parse_unix_timestamp(timestamp)
 
@@ -304,8 +334,9 @@ async def create_event(
     title="Title of the event",
     category="Event type",
     frequency="daily or weekly",
-    time="HH:MM (24h)",
-    start_date="YYYY-MM-DD (optional)",
+    time="Use @time to pick a timestamp (e. g. @time -> Enter -> 22:15 -> Enter)",
+    start_date="Use @time to pick a timestamp for your starting date of your schedule (defaults to instantly)",
+    end_date="Use @time to pick a timestamp for your ending date of your schedule.",
 )
 async def create_schedule(
     interaction: discord.Interaction,
@@ -314,6 +345,7 @@ async def create_schedule(
     frequency: Literal["daily", "weekly"],
     time: str,
     start_date: str | None = None,
+    end_date: str | None = None,
 ) -> None:
     view = ScheduleIntervalView(
         title=title,
@@ -321,6 +353,7 @@ async def create_schedule(
         frequency=frequency,
         time=time,
         start_date=start_date,
+        end_date=end_date
     )
     await interaction.response.send_message(
         "Pick an interval:", view=view, ephemeral=True
