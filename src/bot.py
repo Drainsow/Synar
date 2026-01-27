@@ -21,6 +21,7 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self) -> None:
+        register_commands(self)
         if ENV == "dev":
             guild = discord.Object(id=int(DEV_GUILD_ID))
             self.tree.copy_global_to(guild=guild)
@@ -30,8 +31,7 @@ class MyClient(discord.Client):
             await self.tree.sync()
             log.info("Synced commands globally")
 
-        register_commands(self)
-        
+
         now_ts = int(time.time())
         conn = get_connection()
         try:

@@ -12,6 +12,7 @@ from views import SignupView, EventRolePickerView, ScheduleIntervalView
 
 def register_commands(client: discord.Client):
     client.tree.add_command(create)
+    client.tree.add_command(delete)
 
 create = app_commands.Group(name="create", description="Create events and schedules")
 
@@ -137,3 +138,46 @@ async def create_schedule(
     await interaction.response.send_message(
         "Pick an interval:", view=view, ephemeral=True
     )
+
+
+delete = app_commands.Group(name="delete", description="Delete things")
+
+@delete.command(name="schedule", description="Remove your schedule")
+@app_commands.describe(id="ID of the schedule")
+async def remove_schedule(interaction: discord.Interaction, id: int) -> None:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, creator_id FROM schedules WHERE id = ?",
+            (id,),
+        ).fetchone()
+
+        if not row:
+            await interaction.response.send_message("Schedule not found.", ephemeral=True)
+            return
+
+        is_admin = False
+        if isinstance(interaction.user, discord.Member):
+            is_admin = interaction.user.guild_permissions.administrator
+
+        if row["creator_id"] != interaction.user.id and not is_admin:
+            await interaction.response.send_message(
+                "Only the creator or a server admin can remove this schedule.",
+                ephemeral=True,
+            )
+            return
+
+        conn.execute("DELETE FROM schedule_allowed_roles WHERE schedule_id = ?", (id,))
+        conn.execute("DELETE FROM schedules WHERE id = ?", (id,))
+
+        # Optional: delete future events created by this schedule
+        conn.execute(
+            "DELETE FROM events WHERE schedule_id = ? AND timestamp > ?",
+            (id, int(datetime.now(tz=timezone.utc).timestamp())),
+        )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    await interaction.response.send_message("Schedule removed.", ephemeral=True)
