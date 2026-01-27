@@ -1,0 +1,1 @@
+ALTER TABLE schedules ADD COLUMN signup_mode TEXT NOT NULL DEFAULT 'open';

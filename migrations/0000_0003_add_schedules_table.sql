@@ -11,10 +11,10 @@ CREATE TABLE IF NOT EXISTS schedules (
 
   day_of_week INTEGER,
 
-  time_of_day TEXT NOT NULL,
+  time_of_day INTEGER NOT NULL,
   next_run_at INTEGER,
-  start_date TEXT NOT NULL,
-  end_date TEXT,
+  start_date INTEGER NOT NULL,
+  end_date INTEGER,
 
   created_at INTEGER NOT NULL
 );
