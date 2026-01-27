@@ -38,6 +38,13 @@ WEEKDAY_OPTIONS = [
     discord.SelectOption(label="Sunday", value="6"),
 ]
 
+REMIND_OPTIONS = [
+    discord.SelectOption(label="10 minutes before", value="600"),
+    discord.SelectOption(label="30 minutes before", value="1800"),
+    discord.SelectOption(label="1 hour before", value="3600"),
+    discord.SelectOption(label="6 hours before", value="21600"),
+]
+
 
 class SignupView(discord.ui.View):
     def __init__(self, event_id: int):
@@ -52,6 +59,8 @@ class SignupView(discord.ui.View):
                     child.custom_id = f"signup:decline:{event_id}"
                 if child.label == "Maybe":
                     child.custom_id = f"signup:maybe:{event_id}"
+                if child.label == "⏰":
+                    child.custom_id = f"signup:remind:{event_id}"
                     
 
     async def _set_status(self, interaction: discord.Interaction, status: str):
@@ -128,6 +137,65 @@ class SignupView(discord.ui.View):
     @discord.ui.button(label="Maybe", style=discord.ButtonStyle.gray)
     async def maybe(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._set_status(interaction, "maybe")
+
+    @discord.ui.button(label="⏰", style=discord.ButtonStyle.secondary)
+    async def remind_me(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "When should I remind you?",
+            view=ReminderSelectView(self.event_id),
+            ephemeral=True
+        )
+
+
+class ReminderSelectView(discord.ui.View):
+    def __init__(self, event_id: int):
+        super().__init__(timeout=120)
+        self.event_id = event_id
+
+    @discord.ui.select(
+        placeholder="Choose when to be reminded",
+        options=REMIND_OPTIONS
+    )
+    async def select_reminder(self, interaction: discord.Interaction, select: discord.ui.Select):
+        seconds_before = int(select.values[0])
+
+        conn = get_connection()
+        try:
+            event = conn.execute(
+                "SELECT id, title, timestamp FROM events WHERE id = ?",
+                (self.event_id,),
+            ).fetchone()
+
+            if not event:
+                await interaction.response.send_message("Event not found.", ephemeral=True)
+                return
+
+            remind_at = int(event["timestamp"]) - seconds_before
+            now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+            if remind_at <= now_ts:
+                await interaction.response.send_message("That event is too soon for that reminder.", ephemeral=True)
+                return
+
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO event_reminders (event_id, user_id, remind_at, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    event["id"],
+                    interaction.user.id,
+                    remind_at,
+                    now_ts,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        await interaction.response.edit_message(
+            content=f"✅ I will send you a message {seconds_before // 60} minutes before.",
+            view=None
+        )
 
 
 class EventRolePickerView(discord.ui.View):

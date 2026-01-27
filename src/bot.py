@@ -47,6 +47,7 @@ class MyClient(discord.Client):
         for (event_id,) in rows:
             self.add_view(SignupView(event_id))
         scheduler_loop.start()
+        reminder_loop.start()
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (id=%s)", self.user, self.user.id)
@@ -160,6 +161,40 @@ async def scheduler_loop():
         conn.commit()
     finally:
         conn.close()
+
+
+@tasks.loop(minutes=1)
+async def reminder_loop():
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT r.id, r.user_id, r.event_id, e.title, e.timestamp
+            FROM event_reminders r
+            JOIN events e ON e.id = r.event_id
+            WHERE r.remind_at <= ?
+            """,
+            (now_ts,),
+        ).fetchall()
+
+        for r in rows:
+            try:
+                user = client.get_user(r["user_id"]) or await client.fetch_user(r["user_id"])
+                await user.send(
+                    f"⏰ Reminder: **{r['title']}** starts at <t:{r['timestamp']}:F> (<t:{r['timestamp']}:R>)."
+                )
+            except discord.Forbidden:
+                pass
+            except discord.HTTPException:
+                pass
+
+            conn.execute("DELETE FROM event_reminders WHERE id = ?", (r["id"],))
+
+        conn.commit()
+    finally:
+        conn.close()
+
 
 
 
