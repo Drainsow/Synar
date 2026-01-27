@@ -154,8 +154,6 @@ async def scheduler_loop():
                     allowed_role_ids=allowed_role_ids,
                     schedule_id=row["id"],
                 )
-                await channel.send(embed=embed, view=SignupView(event_id))
-
                 message = await channel.send(embed=embed, view=SignupView(event_id))
                 await message.create_thread(name=f"{row['title']} Discussion")
 
