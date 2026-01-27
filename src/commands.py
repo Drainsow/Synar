@@ -29,7 +29,7 @@ async def create_event(
     title: str,
     category: Literal["Raids", "Dungeons", "Fractals", "Other"],
     timestamp: str,
-    signup_mode: Literal["Open", "Role", "Invite"],
+    signup_mode: Literal["Open", "Role"] #, "Invite"],
 ) -> None:
     ts = parse_unix_timestamp(timestamp)
     if ts is None:
@@ -126,7 +126,7 @@ async def create_schedule(
     category: Literal["Raids", "Dungeons", "Fractals", "Other"],
     frequency: Literal["daily", "weekly"],
     time: str,
-    signup_mode: Literal["Open", "Role", "Invite"],
+    signup_mode: Literal["Open", "Role"], #", Invite"],
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> None:
@@ -213,7 +213,7 @@ async def edit_schedule(
     time: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    signup_mode: Literal["Open", "Role", "Invite"] | None = None,
+    signup_mode: Literal["Open", "Role"] | None = None, #, "Invite"]
 ) -> None:
     conn = get_connection()
     try:
