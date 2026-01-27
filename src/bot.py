@@ -30,8 +30,6 @@ class MyClient(discord.Client):
                     self.tree.clear_commands(guild=guild)
                 await self.tree.sync(guild=guild)
             else:
-                if CLEAR_COMMANDS:
-                    self.tree.clear_commands()
                 await self.tree.sync()
                 log.info("Synced commands globally")
 
