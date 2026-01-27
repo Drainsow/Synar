@@ -15,6 +15,8 @@ def _get_env(name: str, default: str | None = None) -> str | None:
 
 ENV = (_get_env("ENV", "dev") or "dev").lower()
 LOG_LEVEL = (_get_env("LOG_LEVEL", "INFO") or "INFO").upper()
+SYNC_COMMANDS = os.getenv("SYNC_COMMANDS", "false").lower() in ("1", "true", "yes", "on")
+CLEAR_COMMANDS = os.getenv("CLEAR_COMMANDS", "false").lower() in ("1", "true", "yes", "on")
 
 # ---- Discord ----
 

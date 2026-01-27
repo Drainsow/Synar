@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import tasks
 
-from config import ENV, DISCORD_TOKEN, DEV_GUILD_ID, LOG_LEVEL
+from config import ENV, DISCORD_TOKEN, DEV_GUILD_ID, LOG_LEVEL, SYNC_COMMANDS, CLEAR_COMMANDS
 from storage.db import init_db, get_connection
 from helpers import default_max_slots
 from embeds import build_signup_embed
@@ -22,14 +22,18 @@ class MyClient(discord.Client):
 
     async def setup_hook(self) -> None:
         register_commands(self)
-        if ENV == "dev":
-            guild = discord.Object(id=int(DEV_GUILD_ID))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            log.info("Synced commands to dev guild %s", DEV_GUILD_ID)
-        else:
-            await self.tree.sync()
-            log.info("Synced commands globally")
+
+        if SYNC_COMMANDS:
+            if ENV == "dev":
+                guild = discord.Object(id=int(DEV_GUILD_ID))
+                if CLEAR_COMMANDS:
+                    self.tree.clear_commands(guild=guild)
+                await self.tree.sync(guild=guild)
+            else:
+                if CLEAR_COMMANDS:
+                    self.tree.clear_commands()
+                await self.tree.sync()
+                log.info("Synced commands globally")
 
 
         now_ts = int(time.time())
@@ -153,6 +157,9 @@ async def scheduler_loop():
                     schedule_id=row["id"],
                 )
                 await channel.send(embed=embed, view=SignupView(event_id))
+
+                message = await channel.send(embed=embed, view=SignupView(event_id))
+                await message.create_thread(name=f"{row['title']} Discussion")
 
         conn.commit()
     finally:

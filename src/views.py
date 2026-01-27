@@ -447,3 +447,98 @@ class ScheduleRolePickerView(discord.ui.View):
         )
 
         await interaction.response.edit_message(content="Schedule created.", view=None)
+
+
+class ScheduleEditRolePickerView(discord.ui.View):
+    def __init__(
+        self,
+        *,
+        schedule_id: int,
+        title: str,
+        category: str,
+        frequency: str,
+        interval_value: int,
+        day_of_week: int | None,
+        time_ts: int,
+        start_ts: int | None,
+        end_ts: int | None,
+        next_run_at: int,
+        signup_mode: str,
+    ):
+        super().__init__(timeout=300)
+        self.schedule_id = schedule_id
+        self.title = title
+        self.category = category
+        self.frequency = frequency
+        self.interval_value = interval_value
+        self.day_of_week = day_of_week
+        self.time_ts = time_ts
+        self.start_ts = start_ts
+        self.end_ts = end_ts
+        self.next_run_at = next_run_at
+        self.signup_mode = signup_mode
+        self.selected_role_ids: list[int] = []
+
+    @discord.ui.select(
+        placeholder="Select allowed roles (max 5)",
+        min_values=1,
+        max_values=5,
+        cls=discord.ui.RoleSelect,
+    )
+    async def select_roles(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        self.selected_role_ids = [r.id for r in select.values]
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Save Changes", style=discord.ButtonStyle.green)
+    async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_role_ids:
+            await interaction.response.send_message("Select at least one role.", ephemeral=True)
+            return
+
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                UPDATE schedules
+                SET title = ?,
+                    category = ?,
+                    frequency = ?,
+                    interval = ?,
+                    day_of_week = ?,
+                    time_of_day = ?,
+                    start_date = ?,
+                    end_date = ?,
+                    signup_mode = ?,
+                    next_run_at = ?
+                WHERE id = ?
+                """,
+                (
+                    self.title,
+                    self.category,
+                    self.frequency,
+                    self.interval_value,
+                    self.day_of_week,
+                    self.time_ts,
+                    self.start_ts,
+                    self.end_ts,
+                    self.signup_mode,
+                    self.next_run_at,
+                    self.schedule_id,
+                ),
+            )
+
+            conn.execute(
+                "DELETE FROM schedule_allowed_roles WHERE schedule_id = ?",
+                (self.schedule_id,),
+            )
+            for role_id in self.selected_role_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO schedule_allowed_roles (schedule_id, role_id) VALUES (?, ?)",
+                    (self.schedule_id, role_id),
+                )
+
+            conn.commit()
+        finally:
+            conn.close()
+
+        await interaction.response.edit_message(content="Schedule updated.", view=None)
