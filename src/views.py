@@ -59,7 +59,7 @@ class SignupView(discord.ui.View):
                     child.custom_id = f"signup:decline:{event_id}"
                 if child.label == "Maybe":
                     child.custom_id = f"signup:maybe:{event_id}"
-                if child.label == "⏰":
+                if child.label == "Remind Me":
                     child.custom_id = f"signup:remind:{event_id}"
                     
 
@@ -126,19 +126,19 @@ class SignupView(discord.ui.View):
 
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Sign Up", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="Sign Up", style=discord.ButtonStyle.green, row=0)
     async def signup(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._set_status(interaction, "available")
 
-    @discord.ui.button(label="Decline", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="Decline", style=discord.ButtonStyle.red, row=0)
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._set_status(interaction, "unavailable")
 
-    @discord.ui.button(label="Maybe", style=discord.ButtonStyle.gray)
+    @discord.ui.button(label="Maybe", style=discord.ButtonStyle.gray, row=0)
     async def maybe(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._set_status(interaction, "maybe")
 
-    @discord.ui.button(label="⏰", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Remind Me", style=discord.ButtonStyle.secondary, emoji="🔔", row=1)
     async def remind_me(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             "When should I remind you?",
